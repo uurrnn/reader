@@ -1,9 +1,9 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { playlistItems, playlists, tracks } from "@/lib/db/schema";
+import { TONIGHT_NAME } from "./lineup";
 
-export const TONIGHT_NAME = "tonight";
-export const TONIGHT_MAX_ITEMS = 6;
+export { TONIGHT_MAX_ITEMS, TONIGHT_NAME } from "./lineup";
 
 export type TonightItem = {
   itemId: number;
