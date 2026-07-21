@@ -799,8 +799,8 @@ import { NextResponse } from "next/server";
 import { FAMILY_COOKIE, isValidFamilyToken } from "@/lib/auth";
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const body = (await request.json()) as HandleUploadBody;
   try {
+    const body = (await request.json()) as HandleUploadBody;
     const result = await handleUpload({
       body,
       request,
