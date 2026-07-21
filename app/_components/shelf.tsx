@@ -1,11 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useTransition } from "react";
-import { addToTonight, clearTonight, removeTonightItem } from "@/app/actions";
-import { TONIGHT_MAX_ITEMS } from "@/lib/lineup";
+import { useCallback, useRef, useState, useTransition } from "react";
+import { addToTonight, clearResume, clearTonight, removeTonightItem, saveResume } from "@/app/actions";
+import { BedtimeEngine, type EngineSnapshot } from "@/lib/audio/engine";
+import { isWithinCatchUp } from "@/lib/audio/logic";
+import { TONIGHT_MAX_ITEMS, toLineupEntry } from "@/lib/lineup";
 import type { TonightItem } from "@/lib/playlists";
 import type { schedule, tracks } from "@/lib/db/schema";
+import { Player } from "./player";
 
 type Track = typeof tracks.$inferSelect;
 type ScheduleRow = typeof schedule.$inferSelect;
@@ -34,8 +37,58 @@ function Cover({ track, sizes }: { track: Pick<Track, "artworkUrl" | "title">; s
   );
 }
 
-export function Shelf({ tracks, lineup, schedule }: ShelfProps) {
+export function Shelf({ tracks, lineup, schedule, ambient, resume }: ShelfProps) {
   const [, startTransition] = useTransition();
+  const engineRef = useRef<BedtimeEngine | null>(null);
+  // Mirrors engineRef for render-time reads: React's rules of hooks forbid
+  // reading ref.current during render, but the ref itself is still needed so
+  // ensureLoadedEngine's creation guard is synchronous and idempotent even
+  // across rapid taps within the same tick (before a re-render lands).
+  const [engine, setEngine] = useState<BedtimeEngine | null>(null);
+  const [snap, setSnap] = useState<EngineSnapshot | null>(null);
+  const [playerOpen, setPlayerOpen] = useState(false);
+
+  const closePlayer = useCallback(() => {
+    setPlayerOpen(false);
+    setSnap(null);
+  }, []);
+
+  // Must run synchronously inside a tap handler (autoplay policy).
+  function ensureLoadedEngine(): BedtimeEngine {
+    if (!engineRef.current) {
+      engineRef.current = new BedtimeEngine({
+        onSnapshot: setSnap,
+        onResumeTick: (trackId, positionSec) => void saveResume(trackId, positionSec),
+        onTrackDone: (trackId) => void clearResume(trackId),
+      });
+      setEngine(engineRef.current);
+    }
+    engineRef.current.load({
+      lineup: lineup.items.map((i) => toLineupEntry(i.track, i.loopCount)),
+      lineupLoop: lineup.playlist.loop,
+      fadeSeconds: schedule?.fadeSeconds ?? 30,
+      ambient: ambient ? toLineupEntry(ambient, -1) : null,
+      resume,
+    });
+    return engineRef.current;
+  }
+
+  function handlePlayNow() {
+    ensureLoadedEngine().startNow(schedule?.hardStopTime ?? null);
+    setPlayerOpen(true);
+  }
+
+  function handleArm() {
+    if (!schedule?.enabled) return;
+    ensureLoadedEngine().arm(schedule.startTime, schedule.hardStopTime);
+    setPlayerOpen(true);
+  }
+
+  const catchUp =
+    !!schedule?.enabled &&
+    lineup.items.length > 0 &&
+    isWithinCatchUp(new Date(), schedule.startTime);
+
   const full = lineup.items.length >= TONIGHT_MAX_ITEMS;
 
   return (
@@ -81,6 +134,7 @@ export function Shelf({ tracks, lineup, schedule }: ShelfProps) {
                 key={item.itemId}
                 data-testid="lineup-item"
                 onClick={() => startTransition(() => removeTonightItem(item.itemId))}
+                aria-label={`Remove ${item.track.title} from tonight`}
                 className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl ring-2 ring-amber-300/70 transition-transform active:scale-90"
               >
                 <Cover track={item.track} sizes="56px" />
@@ -98,19 +152,46 @@ export function Shelf({ tracks, lineup, schedule }: ShelfProps) {
           <button
             data-testid="play-button"
             disabled={lineup.items.length === 0}
-            onClick={() => {}}
+            onClick={handlePlayNow}
             className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-amber-300 text-3xl text-indigo-950 shadow-lg transition-transform active:scale-90 disabled:opacity-40"
             aria-label="Play tonight's stories"
           >
             ▶
           </button>
         </div>
-        {schedule?.enabled && lineup.items.length > 0 && (
-          <p className="mt-2 text-center text-sm text-amber-200/80">
-            Tonight at {schedule.startTime}
-          </p>
+        {catchUp && (
+          <button
+            data-testid="catch-up-banner"
+            onClick={handlePlayNow}
+            className="mt-2 w-full rounded-xl bg-amber-300/20 py-2 text-center text-sm font-semibold text-amber-200"
+          >
+            It&apos;s past {schedule?.startTime} — start tonight&apos;s stories now
+          </button>
+        )}
+        {schedule?.enabled && lineup.items.length > 0 && !catchUp && (
+          <button
+            data-testid="arm-button"
+            onClick={handleArm}
+            className="mt-2 w-full py-1 text-center text-sm text-amber-200/80"
+          >
+            🕗 Get ready for tonight at {schedule.startTime}
+          </button>
         )}
       </div>
+
+      {playerOpen && snap && engine && (
+        <Player
+          engine={engine}
+          snap={snap}
+          schedule={schedule}
+          covers={lineup.items.map((i) => ({
+            itemId: i.itemId,
+            title: i.track.title,
+            artworkUrl: i.track.artworkUrl,
+          }))}
+          onExit={closePlayer}
+        />
+      )}
     </main>
   );
 }
