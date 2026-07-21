@@ -21,8 +21,16 @@ export async function getOrCreateTonight() {
   const [created] = await db
     .insert(playlists)
     .values({ name: TONIGHT_NAME })
+    .onConflictDoNothing()
     .returning();
-  return created;
+  if (created) return created;
+  const [row] = await db
+    .select()
+    .from(playlists)
+    .where(eq(playlists.name, TONIGHT_NAME));
+  // Invariant: the insert only reaches onConflictDoNothing when a concurrent
+  // insert won the race, so a row with this name must now exist.
+  return row!;
 }
 
 export async function getTonightLineup(): Promise<{

@@ -502,7 +502,7 @@ git commit -m "fix: m4b uploads, duration-probe timeout, surfaced mutation error
 - Produces (used by Tasks 7–9):
   - `requireFamily(): Promise<void>` from `@/lib/auth-server` — throws `Not authorized` without a valid family cookie.
   - `TONIGHT_NAME = "tonight"`, `TONIGHT_MAX_ITEMS = 6` from `@/lib/playlists`.
-  - `getOrCreateTonight(): Promise<{ id: number; name: string; loop: boolean }>`
+  - `getOrCreateTonight(): Promise<{ id: number; name: string; loop: boolean }>` — race-safe via `onConflictDoNothing`; `playlists.name` now has a unique index `playlists_name_unique`.
   - `getTonightLineup(): Promise<{ playlist: { id: number; loop: boolean }; items: TonightItem[] }>` where `TonightItem = { itemId: number; sortOrder: number; loopCount: number | null; track: typeof tracks.$inferSelect }`
   - Server actions from `@/app/actions`: `addToTonight(trackId: number): Promise<void>`, `removeTonightItem(itemId: number): Promise<void>`, `clearTonight(): Promise<void>`, `saveResume(trackId: number, positionSec: number): Promise<void>`, `clearResume(trackId: number): Promise<void>`.
 
@@ -563,8 +563,16 @@ export async function getOrCreateTonight() {
   const [created] = await db
     .insert(playlists)
     .values({ name: TONIGHT_NAME })
+    .onConflictDoNothing()
     .returning();
-  return created;
+  if (created) return created;
+  const [row] = await db
+    .select()
+    .from(playlists)
+    .where(eq(playlists.name, TONIGHT_NAME));
+  // Invariant: the insert only reaches onConflictDoNothing when a concurrent
+  // insert won the race, so a row with this name must now exist.
+  return row!;
 }
 
 export async function getTonightLineup(): Promise<{
