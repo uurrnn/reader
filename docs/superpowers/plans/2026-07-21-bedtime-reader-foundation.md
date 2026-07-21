@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Next.js **16**: the request gate file is `proxy.ts` (NOT `middleware.ts`), exporting `function proxy()` and `const proxyConfig` (NOT `config`).
+- Next.js **16**: the request gate file is `proxy.ts` (NOT `middleware.ts`), exporting `function proxy()` and a `const config` matcher. (Verified against Next 16.2.10 source: the framework reads the export named `config`; `proxyConfig` is silently ignored and the matcher never applies.)
 - `cookies()` from `next/headers` is **async** — always `await cookies()`.
 - Tailwind **v4**: no `tailwind.config.js`; theme lives in `app/globals.css`. Do not create a Tailwind config file.
 - TypeScript strict; path alias `@/*` maps to repo root (already configured in `tsconfig.json`).
@@ -238,7 +238,7 @@ export async function proxy(request: NextRequest) {
   return NextResponse.next();
 }
 
-export const proxyConfig = {
+export const config = {
   matcher: [
     "/((?!login|api/upload|_next/static|_next/image|favicon.ico|icons/|manifest.webmanifest).*)",
   ],
@@ -292,7 +292,7 @@ export default async function LoginPage({ searchParams }: Props) {
           autoFocus
           className="w-full rounded-xl border border-indigo-700 bg-indigo-900 px-4 py-3 text-indigo-100 placeholder-indigo-400 outline-none focus:border-indigo-400"
         />
-        {error && <p className="text-sm text-rose-300">That's not it — try again.</p>}
+        {error && <p className="text-sm text-rose-300">That&apos;s not it — try again.</p>}
         <button
           type="submit"
           className="w-full rounded-xl bg-indigo-400 px-4 py-3 font-semibold text-indigo-950 active:bg-indigo-300"
