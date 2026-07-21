@@ -39,6 +39,11 @@ export function isWithinCatchUp(
   graceMinutes = 90,
 ): boolean {
   const start = startDateFor(now, startTime);
+  if (start.getTime() > now.getTime()) {
+    // The most recent occurrence may have been yesterday (late start,
+    // reopened after midnight).
+    start.setDate(start.getDate() - 1);
+  }
   const elapsedMs = now.getTime() - start.getTime();
   return elapsedMs > 0 && elapsedMs <= graceMinutes * 60 * 1000;
 }

@@ -741,6 +741,14 @@ describe("isWithinCatchUp", () => {
   it("is false once the grace window has passed", () => {
     expect(isWithinCatchUp(at(22, 1), "20:30", 90)).toBe(false);
   });
+
+  it("catches up across midnight after a late start", () => {
+    expect(isWithinCatchUp(new Date(2026, 6, 22, 0, 15), "23:30", 90)).toBe(true);
+  });
+
+  it("is false across midnight once the grace window has passed", () => {
+    expect(isWithinCatchUp(new Date(2026, 6, 22, 1, 15), "23:30", 90)).toBe(false);
+  });
 });
 
 describe("nextPosition", () => {
@@ -879,6 +887,11 @@ export function isWithinCatchUp(
   graceMinutes = 90,
 ): boolean {
   const start = startDateFor(now, startTime);
+  if (start.getTime() > now.getTime()) {
+    // The most recent occurrence may have been yesterday (late start,
+    // reopened after midnight).
+    start.setDate(start.getDate() - 1);
+  }
   const elapsedMs = now.getTime() - start.getTime();
   return elapsedMs > 0 && elapsedMs <= graceMinutes * 60 * 1000;
 }
