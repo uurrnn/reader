@@ -8,6 +8,7 @@ import { requiredEnv } from "@/lib/env";
 export async function loginAction(formData: FormData) {
   const password = String(formData.get("password") ?? "");
   if (password !== requiredEnv("FAMILY_PASSWORD")) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
     redirect("/login?error=1");
   }
   const cookieStore = await cookies();

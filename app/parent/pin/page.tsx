@@ -8,7 +8,11 @@ export default async function PinPage({ searchParams }: Props) {
     <main className="flex min-h-dvh items-center justify-center bg-slate-950 p-6">
       <form action={pinAction} className="w-full max-w-xs space-y-4 text-center">
         <h1 className="text-lg font-semibold text-slate-100">Grown-ups only</h1>
+        <label htmlFor="pin" className="sr-only">
+          Parent PIN
+        </label>
         <input
+          id="pin"
           type="password"
           name="pin"
           inputMode="numeric"

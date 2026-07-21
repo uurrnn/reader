@@ -9,7 +9,11 @@ export default async function LoginPage({ searchParams }: Props) {
       <form action={loginAction} className="w-full max-w-xs space-y-4 text-center">
         <p className="text-4xl">🌙</p>
         <h1 className="text-xl font-semibold text-indigo-100">Bedtime Reader</h1>
+        <label htmlFor="password" className="sr-only">
+          Family password
+        </label>
         <input
+          id="password"
           type="password"
           name="password"
           placeholder="Family password"

@@ -8,6 +8,7 @@ import { requiredEnv } from "@/lib/env";
 export async function pinAction(formData: FormData) {
   const pin = String(formData.get("pin") ?? "");
   if (pin !== requiredEnv("PARENT_PIN")) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
     redirect("/parent/pin?error=1");
   }
   const expiresAtSec = Math.floor(Date.now() / 1000) + PARENT_TTL_SECONDS;
