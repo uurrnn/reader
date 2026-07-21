@@ -1,7 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { addToTonight, clearResume, clearTonight, removeTonightItem, saveResume } from "@/app/actions";
 import { BedtimeEngine, type EngineSnapshot } from "@/lib/audio/engine";
 import { isWithinCatchUp } from "@/lib/audio/logic";
@@ -12,6 +13,8 @@ import { Player } from "./player";
 
 type Track = typeof tracks.$inferSelect;
 type ScheduleRow = typeof schedule.$inferSelect;
+
+const PARENT_HOLD_MS = 2000;
 
 export type ShelfProps = {
   tracks: Track[];
@@ -38,8 +41,26 @@ function Cover({ track, sizes }: { track: Pick<Track, "artworkUrl" | "title">; s
 }
 
 export function Shelf({ tracks, lineup, schedule, ambient, resume }: ShelfProps) {
+  const router = useRouter();
   const [, startTransition] = useTransition();
   const engineRef = useRef<BedtimeEngine | null>(null);
+  // Hidden parent door: hold the moon for PARENT_HOLD_MS. Deliberately
+  // unlabeled — the PIN gate in proxy.ts is the real lock, not the secrecy.
+  const parentHold = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelParentHold = useCallback(() => {
+    if (parentHold.current) {
+      clearTimeout(parentHold.current);
+      parentHold.current = null;
+    }
+  }, []);
+
+  useEffect(() => cancelParentHold, [cancelParentHold]);
+
+  function startParentHold() {
+    cancelParentHold();
+    parentHold.current = setTimeout(() => router.push("/parent"), PARENT_HOLD_MS);
+  }
   // Mirrors engineRef for render-time reads: React's rules of hooks forbid
   // reading ref.current during render, but the ref itself is still needed so
   // ensureLoadedEngine's creation guard is synchronous and idempotent even
@@ -95,7 +116,21 @@ export function Shelf({ tracks, lineup, schedule, ambient, resume }: ShelfProps)
   return (
     <main className="min-h-dvh bg-indigo-950 pb-44">
       <header className="flex items-center justify-between px-5 pt-6 pb-2">
-        <h1 className="text-2xl font-bold text-amber-100">🌙 Tonight&apos;s stories</h1>
+        <h1 className="text-2xl font-bold text-amber-100">
+          <span
+            data-testid="parent-door"
+            className="inline-block select-none"
+            style={{ touchAction: "none", WebkitTouchCallout: "none" }}
+            onPointerDown={startParentHold}
+            onPointerUp={cancelParentHold}
+            onPointerCancel={cancelParentHold}
+            onPointerLeave={cancelParentHold}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            🌙
+          </span>{" "}
+          Tonight&apos;s stories
+        </h1>
       </header>
 
       <div data-testid="shelf-grid" className="grid grid-cols-2 gap-4 px-5">

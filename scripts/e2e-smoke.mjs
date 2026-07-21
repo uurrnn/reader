@@ -13,6 +13,9 @@
 //     the actual dev Neon database and Vercel Blob store. The script cleans
 //     up every track it creates (and defensively clears any pre-existing
 //     tracks first), so the library is empty both before and after a run.
+//     BECAUSE OF THAT CLEANUP, the run aborts if the library already has
+//     tracks in it (the real family library now lives in this database);
+//     set E2E_ALLOW_WIPE=1 to override and destroy whatever is there.
 //
 // Run: npm run e2e
 //
@@ -26,7 +29,8 @@
 // library empty.
 //
 // Plan 2: shelf/lineup, playback with pause/skip/auto-exit, mocked-clock
-// scheduled start, catch-up banner.
+// scheduled start, catch-up banner, hidden parent door (2s moon hold
+// navigates to /parent; quick tap must not).
 
 import { chromium } from "playwright-core";
 import { execFileSync } from "node:child_process";
@@ -184,6 +188,17 @@ async function main() {
     // would no longer match.
     const fileInput = page.locator('input[type="file"][accept*="audio/*"]');
 
+    // Everything below wipes and repopulates the library against the real
+    // dev database and blob store. The real family library lives there now,
+    // so refuse to continue if tracks already exist.
+    const preexisting = await page.locator(ROW_SELECTOR).count();
+    if (preexisting > 0 && !process.env.E2E_ALLOW_WIPE) {
+      throw new Error(
+        `library already has ${preexisting} track(s); this run would delete them all. ` +
+          "Set E2E_ALLOW_WIPE=1 to run anyway (this DESTROYS the library and its blobs).",
+      );
+    }
+
     // Defensive cleanup in case a previous interrupted run left residue.
     await clearLibrary(page, "at start (defensive cleanup)");
 
@@ -301,6 +316,25 @@ async function main() {
     // --- Step 9: kid shelf + lineup ---
     await page.goto(BASE + "/");
     await page.waitForSelector('[data-testid="shelf-grid"]');
+
+    // Hidden parent door: a quick tap on the moon must do nothing; holding
+    // it for 2s must navigate to /parent (already parent-authed here).
+    const moon = page.locator('[data-testid="parent-door"]');
+    await moon.click();
+    await page.waitForTimeout(2500);
+    assert(
+      new URL(page.url()).pathname === "/",
+      "quick tap on the moon does not open the parent door",
+    );
+    const moonBox = await moon.boundingBox();
+    await page.mouse.move(moonBox.x + moonBox.width / 2, moonBox.y + moonBox.height / 2);
+    await page.mouse.down();
+    await page.waitForURL((u) => u.pathname === "/parent", { timeout: 5000 });
+    await page.mouse.up();
+    assert(true, "holding the moon for 2s opens the parent page");
+    await page.goto(BASE + "/");
+    await page.waitForSelector('[data-testid="shelf-grid"]');
+
     const tileCount = await page.locator('[data-testid="shelf-tile"]').count();
     assert(tileCount === 3, `shelf shows a tile per library track (${tileCount})`);
 
