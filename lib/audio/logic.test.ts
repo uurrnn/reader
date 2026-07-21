@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   fadeCurve,
+  hardStopAlreadyPassed,
   isWithinCatchUp,
   msUntilStart,
   nextPosition,
@@ -43,6 +44,24 @@ describe("isWithinCatchUp", () => {
 
   it("is false across midnight once the grace window has passed", () => {
     expect(isWithinCatchUp(new Date(2026, 6, 22, 1, 15), "23:30", 90)).toBe(false);
+  });
+});
+
+describe("hardStopAlreadyPassed", () => {
+  it("is false when the stop is later tonight", () => {
+    expect(hardStopAlreadyPassed(at(20, 30), "21:15")).toBe(false);
+  });
+
+  it("is false for a past-midnight stop configured tonight", () => {
+    expect(hardStopAlreadyPassed(at(20, 30), "01:00")).toBe(false);
+  });
+
+  it("is true once the stop time has passed this evening", () => {
+    expect(hardStopAlreadyPassed(at(23, 0), "21:15")).toBe(true);
+  });
+
+  it("is true after a past-midnight stop has passed", () => {
+    expect(hardStopAlreadyPassed(at(1, 30), "01:00")).toBe(true);
   });
 });
 

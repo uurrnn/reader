@@ -1,5 +1,6 @@
 import {
   fadeCurve,
+  hardStopAlreadyPassed,
   msUntilStart,
   nextPosition,
   resumeStartPosition,
@@ -54,12 +55,15 @@ export class BedtimeEngine {
   private pos: PlayPosition = { index: 0, loopsDone: 0 };
   private secondsToStart: number | null = null;
   private inAmbient = false;
+  private hardStopPassed = false;
 
   private countdownInterval: ReturnType<typeof setInterval> | null = null;
   private startTimeout: ReturnType<typeof setTimeout> | null = null;
   private hardStopTimeout: ReturnType<typeof setTimeout> | null = null;
   private resumeInterval: ReturnType<typeof setInterval> | null = null;
   private fadeTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopTimeout: ReturnType<typeof setTimeout> | null = null;
+  private pendingSeek: (() => void) | null = null;
 
   constructor(cb: EngineCallbacks) {
     this.cb = cb;
@@ -130,24 +134,28 @@ export class BedtimeEngine {
   }
 
   private playEntry(entry: LineupEntry, fadeInSec: number, targetGain: number): void {
+    if (this.pendingSeek) {
+      this.audio.removeEventListener("loadedmetadata", this.pendingSeek);
+      this.pendingSeek = null;
+    }
     const startAt = shouldPersistResume(entry.kind, entry.durationSec)
       ? resumeStartPosition(this.opts.resume[entry.trackId], entry.durationSec)
       : 0;
+    delete this.opts.resume[entry.trackId];
     this.audio.loop = this.inAmbient;
     this.audio.src = entry.audioUrl;
     if (startAt > 0) {
-      this.audio.addEventListener(
-        "loadedmetadata",
-        () => {
-          this.audio.currentTime = startAt;
-        },
-        { once: true },
-      );
+      const seek = () => {
+        this.pendingSeek = null;
+        this.audio.currentTime = startAt;
+      };
+      this.pendingSeek = seek;
+      this.audio.addEventListener("loadedmetadata", seek, { once: true });
     }
     void this.audio
       .play()
       .then(() => this.fadeTo(targetGain, fadeInSec))
-      .catch(() => {});
+      .catch((error) => console.warn("bedtime: play() failed", error));
   }
 
   private startResumeTicks(): void {
@@ -170,7 +178,12 @@ export class BedtimeEngine {
     for (const t of [this.countdownInterval, this.resumeInterval]) {
       if (t) clearInterval(t);
     }
-    for (const t of [this.startTimeout, this.hardStopTimeout, this.fadeTimeout]) {
+    for (const t of [
+      this.startTimeout,
+      this.hardStopTimeout,
+      this.fadeTimeout,
+      this.stopTimeout,
+    ]) {
       if (t) clearTimeout(t);
     }
     this.countdownInterval = null;
@@ -178,6 +191,7 @@ export class BedtimeEngine {
     this.startTimeout = null;
     this.hardStopTimeout = null;
     this.fadeTimeout = null;
+    this.stopTimeout = null;
   }
 
   arm(startTime: string, hardStopTime: string | null): void {
@@ -212,7 +226,11 @@ export class BedtimeEngine {
     this.secondsToStart = null;
     this.inAmbient = false;
     this.pos = { index: 0, loopsDone: 0 };
-    if (hardStopTime) {
+    // A hard stop that already went by tonight means: play the lineup once —
+    // no ambient rollover, no lineup loop — silent as soon as the stories end.
+    this.hardStopPassed =
+      hardStopTime !== null && hardStopAlreadyPassed(new Date(), hardStopTime);
+    if (hardStopTime && !this.hardStopPassed) {
       this.hardStopTimeout = setTimeout(
         () => this.stop({ fade: true }),
         msUntilStart(new Date(), hardStopTime),
@@ -228,8 +246,15 @@ export class BedtimeEngine {
     if (this.inAmbient) return; // ambient loops via audio.loop
     const entry = this.opts.lineup[this.pos.index];
     this.pos = { ...this.pos, loopsDone: this.pos.loopsDone + 1 };
-    const next = nextPosition(this.pos, this.opts.lineup, this.opts.lineupLoop);
-    const finishedItem = next === "end" || next.index !== this.pos.index;
+    const next = nextPosition(
+      this.pos,
+      this.opts.lineup,
+      this.opts.lineupLoop && !this.hardStopPassed,
+    );
+    const finishedItem =
+      next === "end" ||
+      next.index !== this.pos.index ||
+      next.loopsDone !== this.pos.loopsDone;
     if (entry && finishedItem) this.cb.onTrackDone(entry.trackId);
     this.applyNext(next);
   }
@@ -243,16 +268,20 @@ export class BedtimeEngine {
     const next = force
       ? this.pos.index + 1 < this.opts.lineup.length
         ? { index: this.pos.index + 1, loopsDone: 0 }
-        : this.opts.lineupLoop && this.opts.lineup.length > 0
+        : this.opts.lineupLoop && !this.hardStopPassed && this.opts.lineup.length > 0
           ? { index: 0, loopsDone: 0 }
           : ("end" as const)
-      : nextPosition(this.pos, this.opts.lineup, this.opts.lineupLoop);
+      : nextPosition(
+          this.pos,
+          this.opts.lineup,
+          this.opts.lineupLoop && !this.hardStopPassed,
+        );
     this.applyNext(next);
   }
 
   private applyNext(next: PlayPosition | "end"): void {
     if (next === "end") {
-      if (this.opts.ambient) {
+      if (this.opts.ambient && !this.hardStopPassed) {
         this.inAmbient = true;
         this.setState("ambient");
         this.playEntry(this.opts.ambient, AMBIENT_FADE_SEC, AMBIENT_GAIN);
@@ -271,6 +300,7 @@ export class BedtimeEngine {
   }
 
   togglePause(): void {
+    if (this.state !== "playing" && this.state !== "ambient") return;
     if (this.audio.paused) {
       this.ensureContext();
       void this.audio
@@ -278,7 +308,7 @@ export class BedtimeEngine {
         .then(() =>
           this.fadeTo(this.inAmbient ? AMBIENT_GAIN : 1, PAUSE_FADE_SEC),
         )
-        .catch(() => {});
+        .catch((error) => console.warn("bedtime: play() failed", error));
       this.emit();
     } else {
       this.fadeTo(0, PAUSE_FADE_SEC, () => {
@@ -292,6 +322,10 @@ export class BedtimeEngine {
     const finish = () => {
       this.audio.pause();
       this.audio.removeAttribute("src");
+      if (this.ctx && this.gain) {
+        this.gain.gain.cancelScheduledValues(this.ctx.currentTime);
+        this.gain.gain.setValueAtTime(0, this.ctx.currentTime);
+      }
       this.inAmbient = false;
       this.clearTimers();
       this.secondsToStart = null;
@@ -299,7 +333,11 @@ export class BedtimeEngine {
     };
     if (opts.fade && (this.state === "playing" || this.state === "ambient")) {
       this.setState("fading");
-      this.fadeTo(0, this.opts.fadeSeconds, finish);
+      this.fadeTo(0, this.opts.fadeSeconds);
+      this.stopTimeout = setTimeout(
+        finish,
+        Math.max(this.opts.fadeSeconds, 0.05) * 1000,
+      );
     } else {
       finish();
     }

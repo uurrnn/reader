@@ -10,7 +10,7 @@ import { getOrCreateTonight, TONIGHT_MAX_ITEMS } from "@/lib/playlists";
 export async function addToTonight(trackId: number): Promise<void> {
   await requireFamily();
   const [track] = await db.select().from(tracks).where(eq(tracks.id, trackId));
-  if (!track) return;
+  if (!track || track.kind === "ambient") return;
   const tonight = await getOrCreateTonight();
   const [{ count, maxSort }] = await db
     .select({

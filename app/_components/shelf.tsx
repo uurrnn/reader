@@ -58,8 +58,9 @@ export function Shelf({ tracks, lineup, schedule, ambient, resume }: ShelfProps)
     if (!engineRef.current) {
       engineRef.current = new BedtimeEngine({
         onSnapshot: setSnap,
-        onResumeTick: (trackId, positionSec) => void saveResume(trackId, positionSec),
-        onTrackDone: (trackId) => void clearResume(trackId),
+        onResumeTick: (trackId, positionSec) =>
+          void saveResume(trackId, positionSec).catch(() => {}),
+        onTrackDone: (trackId) => void clearResume(trackId).catch(() => {}),
       });
       setEngine(engineRef.current);
     }

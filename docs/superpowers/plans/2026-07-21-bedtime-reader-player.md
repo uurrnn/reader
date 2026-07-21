@@ -610,7 +610,7 @@ import { getOrCreateTonight, TONIGHT_MAX_ITEMS } from "@/lib/playlists";
 export async function addToTonight(trackId: number): Promise<void> {
   await requireFamily();
   const [track] = await db.select().from(tracks).where(eq(tracks.id, trackId));
-  if (!track) return;
+  if (!track || track.kind === "ambient") return;
   const tonight = await getOrCreateTonight();
   const [{ count, maxSort }] = await db
     .select({
@@ -706,6 +706,7 @@ Create `lib/audio/logic.test.ts`:
 import { describe, expect, it } from "vitest";
 import {
   fadeCurve,
+  hardStopAlreadyPassed,
   isWithinCatchUp,
   msUntilStart,
   nextPosition,
@@ -748,6 +749,24 @@ describe("isWithinCatchUp", () => {
 
   it("is false across midnight once the grace window has passed", () => {
     expect(isWithinCatchUp(new Date(2026, 6, 22, 1, 15), "23:30", 90)).toBe(false);
+  });
+});
+
+describe("hardStopAlreadyPassed", () => {
+  it("is false when the stop is later tonight", () => {
+    expect(hardStopAlreadyPassed(at(20, 30), "21:15")).toBe(false);
+  });
+
+  it("is false for a past-midnight stop configured tonight", () => {
+    expect(hardStopAlreadyPassed(at(20, 30), "01:00")).toBe(false);
+  });
+
+  it("is true once the stop time has passed this evening", () => {
+    expect(hardStopAlreadyPassed(at(23, 0), "21:15")).toBe(true);
+  });
+
+  it("is true after a past-midnight stop has passed", () => {
+    expect(hardStopAlreadyPassed(at(1, 30), "01:00")).toBe(true);
   });
 });
 
@@ -896,6 +915,12 @@ export function isWithinCatchUp(
   return elapsedMs > 0 && elapsedMs <= graceMinutes * 60 * 1000;
 }
 
+export function hardStopAlreadyPassed(now: Date, hardStopTime: string): boolean {
+  // msUntilStart rolls a passed time to tomorrow; anything more than 12h out
+  // means the stop time already went by this evening.
+  return msUntilStart(now, hardStopTime) > 12 * 60 * 60 * 1000;
+}
+
 export function nextPosition(
   pos: PlayPosition,
   lineup: { loopCount: number | null }[],
@@ -981,6 +1006,7 @@ Key implementation constraints baked into the code below:
 ```ts
 import {
   fadeCurve,
+  hardStopAlreadyPassed,
   msUntilStart,
   nextPosition,
   resumeStartPosition,
@@ -1035,12 +1061,15 @@ export class BedtimeEngine {
   private pos: PlayPosition = { index: 0, loopsDone: 0 };
   private secondsToStart: number | null = null;
   private inAmbient = false;
+  private hardStopPassed = false;
 
   private countdownInterval: ReturnType<typeof setInterval> | null = null;
   private startTimeout: ReturnType<typeof setTimeout> | null = null;
   private hardStopTimeout: ReturnType<typeof setTimeout> | null = null;
   private resumeInterval: ReturnType<typeof setInterval> | null = null;
   private fadeTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopTimeout: ReturnType<typeof setTimeout> | null = null;
+  private pendingSeek: (() => void) | null = null;
 
   constructor(cb: EngineCallbacks) {
     this.cb = cb;
@@ -1111,24 +1140,28 @@ export class BedtimeEngine {
   }
 
   private playEntry(entry: LineupEntry, fadeInSec: number, targetGain: number): void {
+    if (this.pendingSeek) {
+      this.audio.removeEventListener("loadedmetadata", this.pendingSeek);
+      this.pendingSeek = null;
+    }
     const startAt = shouldPersistResume(entry.kind, entry.durationSec)
       ? resumeStartPosition(this.opts.resume[entry.trackId], entry.durationSec)
       : 0;
+    delete this.opts.resume[entry.trackId];
     this.audio.loop = this.inAmbient;
     this.audio.src = entry.audioUrl;
     if (startAt > 0) {
-      this.audio.addEventListener(
-        "loadedmetadata",
-        () => {
-          this.audio.currentTime = startAt;
-        },
-        { once: true },
-      );
+      const seek = () => {
+        this.pendingSeek = null;
+        this.audio.currentTime = startAt;
+      };
+      this.pendingSeek = seek;
+      this.audio.addEventListener("loadedmetadata", seek, { once: true });
     }
     void this.audio
       .play()
       .then(() => this.fadeTo(targetGain, fadeInSec))
-      .catch(() => {});
+      .catch((error) => console.warn("bedtime: play() failed", error));
   }
 
   private startResumeTicks(): void {
@@ -1151,7 +1184,12 @@ export class BedtimeEngine {
     for (const t of [this.countdownInterval, this.resumeInterval]) {
       if (t) clearInterval(t);
     }
-    for (const t of [this.startTimeout, this.hardStopTimeout, this.fadeTimeout]) {
+    for (const t of [
+      this.startTimeout,
+      this.hardStopTimeout,
+      this.fadeTimeout,
+      this.stopTimeout,
+    ]) {
       if (t) clearTimeout(t);
     }
     this.countdownInterval = null;
@@ -1159,6 +1197,7 @@ export class BedtimeEngine {
     this.startTimeout = null;
     this.hardStopTimeout = null;
     this.fadeTimeout = null;
+    this.stopTimeout = null;
   }
 
   arm(startTime: string, hardStopTime: string | null): void {
@@ -1193,7 +1232,11 @@ export class BedtimeEngine {
     this.secondsToStart = null;
     this.inAmbient = false;
     this.pos = { index: 0, loopsDone: 0 };
-    if (hardStopTime) {
+    // A hard stop that already went by tonight means: play the lineup once —
+    // no ambient rollover, no lineup loop — silent as soon as the stories end.
+    this.hardStopPassed =
+      hardStopTime !== null && hardStopAlreadyPassed(new Date(), hardStopTime);
+    if (hardStopTime && !this.hardStopPassed) {
       this.hardStopTimeout = setTimeout(
         () => this.stop({ fade: true }),
         msUntilStart(new Date(), hardStopTime),
@@ -1209,8 +1252,15 @@ export class BedtimeEngine {
     if (this.inAmbient) return; // ambient loops via audio.loop
     const entry = this.opts.lineup[this.pos.index];
     this.pos = { ...this.pos, loopsDone: this.pos.loopsDone + 1 };
-    const next = nextPosition(this.pos, this.opts.lineup, this.opts.lineupLoop);
-    const finishedItem = next === "end" || next.index !== this.pos.index;
+    const next = nextPosition(
+      this.pos,
+      this.opts.lineup,
+      this.opts.lineupLoop && !this.hardStopPassed,
+    );
+    const finishedItem =
+      next === "end" ||
+      next.index !== this.pos.index ||
+      next.loopsDone !== this.pos.loopsDone;
     if (entry && finishedItem) this.cb.onTrackDone(entry.trackId);
     this.applyNext(next);
   }
@@ -1224,16 +1274,20 @@ export class BedtimeEngine {
     const next = force
       ? this.pos.index + 1 < this.opts.lineup.length
         ? { index: this.pos.index + 1, loopsDone: 0 }
-        : this.opts.lineupLoop && this.opts.lineup.length > 0
+        : this.opts.lineupLoop && !this.hardStopPassed && this.opts.lineup.length > 0
           ? { index: 0, loopsDone: 0 }
           : ("end" as const)
-      : nextPosition(this.pos, this.opts.lineup, this.opts.lineupLoop);
+      : nextPosition(
+          this.pos,
+          this.opts.lineup,
+          this.opts.lineupLoop && !this.hardStopPassed,
+        );
     this.applyNext(next);
   }
 
   private applyNext(next: PlayPosition | "end"): void {
     if (next === "end") {
-      if (this.opts.ambient) {
+      if (this.opts.ambient && !this.hardStopPassed) {
         this.inAmbient = true;
         this.setState("ambient");
         this.playEntry(this.opts.ambient, AMBIENT_FADE_SEC, AMBIENT_GAIN);
@@ -1252,6 +1306,7 @@ export class BedtimeEngine {
   }
 
   togglePause(): void {
+    if (this.state !== "playing" && this.state !== "ambient") return;
     if (this.audio.paused) {
       this.ensureContext();
       void this.audio
@@ -1259,7 +1314,7 @@ export class BedtimeEngine {
         .then(() =>
           this.fadeTo(this.inAmbient ? AMBIENT_GAIN : 1, PAUSE_FADE_SEC),
         )
-        .catch(() => {});
+        .catch((error) => console.warn("bedtime: play() failed", error));
       this.emit();
     } else {
       this.fadeTo(0, PAUSE_FADE_SEC, () => {
@@ -1273,6 +1328,10 @@ export class BedtimeEngine {
     const finish = () => {
       this.audio.pause();
       this.audio.removeAttribute("src");
+      if (this.ctx && this.gain) {
+        this.gain.gain.cancelScheduledValues(this.ctx.currentTime);
+        this.gain.gain.setValueAtTime(0, this.ctx.currentTime);
+      }
       this.inAmbient = false;
       this.clearTimers();
       this.secondsToStart = null;
@@ -1280,7 +1339,11 @@ export class BedtimeEngine {
     };
     if (opts.fade && (this.state === "playing" || this.state === "ambient")) {
       this.setState("fading");
-      this.fadeTo(0, this.opts.fadeSeconds, finish);
+      this.fadeTo(0, this.opts.fadeSeconds);
+      this.stopTimeout = setTimeout(
+        finish,
+        Math.max(this.opts.fadeSeconds, 0.05) * 1000,
+      );
     } else {
       finish();
     }
@@ -1854,8 +1917,9 @@ export function Shelf({ tracks, lineup, schedule, ambient, resume }: ShelfProps)
     if (!engineRef.current) {
       engineRef.current = new BedtimeEngine({
         onSnapshot: setSnap,
-        onResumeTick: (trackId, positionSec) => void saveResume(trackId, positionSec),
-        onTrackDone: (trackId) => void clearResume(trackId),
+        onResumeTick: (trackId, positionSec) =>
+          void saveResume(trackId, positionSec).catch(() => {}),
+        onTrackDone: (trackId) => void clearResume(trackId).catch(() => {}),
       });
     }
     engineRef.current.load({
@@ -2673,6 +2737,7 @@ git push origin master
 - **Deliberate scope calls:** no UI to set per-item `loopCount` in v1 (engine + schema support it; the schedule page's "repeat lineup" toggle covers the common case). No drag-reorder of the lineup (remove + re-add covers a 1–6 item strip) — this is what keeps the neon-http no-transaction constraint safe. Family password token stays non-expiring by design (1-year cookie is the spec).
 - **Type consistency check:** `EngineSnapshot.paused` used by Player ✓ (defined in Task 6); `toLineupEntry` consumed in Task 8's shelf plumbing matches Task 7's signature ✓; `TonightItem.itemId/track` shape matches Task 4's select ✓; `saveSchedule` reads the exact input names rendered by the page form ✓; `nextPosition` "engine increments `loopsDone` before calling" contract is honored in `handleEnded` ✓.
 - **Bundle boundary:** client components import runtime values only from `lib/lineup`, `lib/audio/*`, `lib/schedule`, `app/actions`; `lib/playlists` (→ `lib/db` → `requiredEnv("DATABASE_URL")`) is server-only, type-imports excepted.
+- **Final-review adjudication:** a hard stop that already passed at play time now means "play the lineup once, no ambient, no loop" (spec: "everything silent by this time"); resume offsets are consumed on first use so loop replays start from 0.
 
 
 

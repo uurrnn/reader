@@ -48,6 +48,12 @@ export function isWithinCatchUp(
   return elapsedMs > 0 && elapsedMs <= graceMinutes * 60 * 1000;
 }
 
+export function hardStopAlreadyPassed(now: Date, hardStopTime: string): boolean {
+  // msUntilStart rolls a passed time to tomorrow; anything more than 12h out
+  // means the stop time already went by this evening.
+  return msUntilStart(now, hardStopTime) > 12 * 60 * 60 * 1000;
+}
+
 export function nextPosition(
   pos: PlayPosition,
   lineup: { loopCount: number | null }[],
