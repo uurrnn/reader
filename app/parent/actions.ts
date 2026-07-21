@@ -7,6 +7,7 @@ import { parseWebStream } from "music-metadata";
 import { db } from "@/lib/db";
 import { tracks } from "@/lib/db/schema";
 import { toTrackMeta, type AudioMetaLike } from "@/lib/tracks/metadata";
+import { requireParent } from "@/lib/auth-server";
 
 function assertBlobUrl(url: string) {
   const host = new URL(url).hostname;
@@ -20,6 +21,7 @@ export async function finalizeTrack(input: {
   filename: string;
   clientDurationSec: number | null;
 }): Promise<void> {
+  await requireParent();
   assertBlobUrl(input.url);
 
   let meta: AudioMetaLike | null = null;
@@ -37,22 +39,30 @@ export async function finalizeTrack(input: {
   const extracted = toTrackMeta(meta, input.filename);
 
   let artworkUrl: string | null = null;
-  if (extracted.picture) {
-    const ext = extracted.picture.mime.split("/")[1] ?? "jpg";
-    const blob = await put(
-      `artwork/${crypto.randomUUID()}.${ext}`,
-      Buffer.from(extracted.picture.data),
-      { access: "public", contentType: extracted.picture.mime },
-    );
-    artworkUrl = blob.url;
-  }
+  try {
+    if (extracted.picture) {
+      const ext = extracted.picture.mime.split("/")[1] ?? "jpg";
+      const blob = await put(
+        `artwork/${crypto.randomUUID()}.${ext}`,
+        Buffer.from(extracted.picture.data),
+        { access: "public", contentType: extracted.picture.mime },
+      );
+      artworkUrl = blob.url;
+    }
 
-  await db.insert(tracks).values({
-    title: extracted.title,
-    audioUrl: input.url,
-    artworkUrl,
-    durationSec: extracted.durationSec ?? input.clientDurationSec,
-  });
+    await db.insert(tracks).values({
+      title: extracted.title,
+      audioUrl: input.url,
+      artworkUrl,
+      durationSec: extracted.durationSec ?? input.clientDurationSec,
+    });
+  } catch (error) {
+    try {
+      if (artworkUrl) await del(artworkUrl);
+      await del(input.url);
+    } catch {}
+    throw error;
+  }
   revalidatePath("/parent");
 }
 
@@ -60,11 +70,13 @@ export async function updateTrack(
   id: number,
   fields: { title?: string; kind?: "story" | "song" | "ambient" },
 ): Promise<void> {
+  await requireParent();
   await db.update(tracks).set(fields).where(eq(tracks.id, id));
   revalidatePath("/parent");
 }
 
 export async function deleteTrack(id: number): Promise<void> {
+  await requireParent();
   const [row] = await db.select().from(tracks).where(eq(tracks.id, id));
   if (!row) return;
   await db.delete(tracks).where(eq(tracks.id, id));
@@ -76,6 +88,7 @@ export async function deleteTrack(id: number): Promise<void> {
 }
 
 export async function replaceArtwork(id: number, formData: FormData): Promise<void> {
+  await requireParent();
   const file = formData.get("artwork");
   if (!(file instanceof File) || !file.type.startsWith("image/")) return;
   const [row] = await db.select().from(tracks).where(eq(tracks.id, id));
