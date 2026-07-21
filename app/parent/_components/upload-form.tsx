@@ -22,21 +22,28 @@ function measureDuration(file: File): Promise<number | null> {
   });
 }
 
-type FileStatus = { name: string; state: "uploading" | "saving" | "done" | "error"; pct: number };
+type FileStatus = {
+  id: number;
+  name: string;
+  state: "uploading" | "saving" | "done" | "error";
+  pct: number;
+};
 
 export function UploadForm() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const nextId = useRef(0);
   const [statuses, setStatuses] = useState<FileStatus[]>([]);
 
   async function handleFiles(files: FileList | null) {
     if (!files?.length) return;
     for (const file of Array.from(files)) {
+      const id = nextId.current++;
       const update = (patch: Partial<FileStatus>) =>
         setStatuses((prev) =>
-          prev.map((s) => (s.name === file.name ? { ...s, ...patch } : s)),
+          prev.map((s) => (s.id === id ? { ...s, ...patch } : s)),
         );
-      setStatuses((prev) => [...prev, { name: file.name, state: "uploading", pct: 0 }]);
+      setStatuses((prev) => [...prev, { id, name: file.name, state: "uploading", pct: 0 }]);
       try {
         const clientDurationSec = await measureDuration(file);
         const blob = await upload(`audio/${file.name}`, file, {
@@ -69,7 +76,7 @@ export function UploadForm() {
         />
       </label>
       {statuses.map((s) => (
-        <p key={s.name} className="text-sm text-slate-400">
+        <p key={s.id} className="text-sm text-slate-400">
           {s.name} —{" "}
           {s.state === "uploading"
             ? `${s.pct}%`
