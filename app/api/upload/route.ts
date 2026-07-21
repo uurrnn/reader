@@ -2,6 +2,7 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { FAMILY_COOKIE, isValidFamilyToken } from "@/lib/auth";
+import { requiredEnv } from "@/lib/env";
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
@@ -13,7 +14,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         const cookieStore = await cookies();
         const ok = await isValidFamilyToken(
           cookieStore.get(FAMILY_COOKIE)?.value,
-          process.env.FAMILY_PASSWORD!,
+          requiredEnv("FAMILY_PASSWORD"),
         );
         if (!ok) throw new Error("Not authorized");
         return {
@@ -26,6 +27,8 @@ export async function POST(request: Request): Promise<NextResponse> {
             "audio/ogg",
             "audio/wav",
             "audio/flac",
+            "audio/x-m4b",
+            "audio/m4b",
           ],
           addRandomSuffix: true,
           maximumSizeInBytes: 500 * 1024 * 1024,

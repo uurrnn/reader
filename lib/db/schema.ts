@@ -7,6 +7,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const trackKind = pgEnum("track_kind", ["story", "song", "ambient"]);
@@ -21,11 +22,15 @@ export const tracks = pgTable("tracks", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-export const playlists = pgTable("playlists", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  loop: boolean("loop").notNull().default(false),
-});
+export const playlists = pgTable(
+  "playlists",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    loop: boolean("loop").notNull().default(false),
+  },
+  (table) => [uniqueIndex("playlists_name_unique").on(table.name)],
+);
 
 export const playlistItems = pgTable("playlist_items", {
   id: serial("id").primaryKey(),

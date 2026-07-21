@@ -1,0 +1,53 @@
+import { asc, eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { playlistItems, playlists, tracks } from "@/lib/db/schema";
+import { TONIGHT_NAME } from "./lineup";
+
+export { TONIGHT_MAX_ITEMS, TONIGHT_NAME } from "./lineup";
+
+export type TonightItem = {
+  itemId: number;
+  sortOrder: number;
+  loopCount: number | null;
+  track: typeof tracks.$inferSelect;
+};
+
+export async function getOrCreateTonight() {
+  const [existing] = await db
+    .select()
+    .from(playlists)
+    .where(eq(playlists.name, TONIGHT_NAME));
+  if (existing) return existing;
+  const [created] = await db
+    .insert(playlists)
+    .values({ name: TONIGHT_NAME })
+    .onConflictDoNothing()
+    .returning();
+  if (created) return created;
+  const [row] = await db
+    .select()
+    .from(playlists)
+    .where(eq(playlists.name, TONIGHT_NAME));
+  // Invariant: the insert only reaches onConflictDoNothing when a concurrent
+  // insert won the race, so a row with this name must now exist.
+  return row!;
+}
+
+export async function getTonightLineup(): Promise<{
+  playlist: { id: number; loop: boolean };
+  items: TonightItem[];
+}> {
+  const playlist = await getOrCreateTonight();
+  const rows = await db
+    .select({
+      itemId: playlistItems.id,
+      sortOrder: playlistItems.sortOrder,
+      loopCount: playlistItems.loopCount,
+      track: tracks,
+    })
+    .from(playlistItems)
+    .innerJoin(tracks, eq(playlistItems.trackId, tracks.id))
+    .where(eq(playlistItems.playlistId, playlist.id))
+    .orderBy(asc(playlistItems.sortOrder));
+  return { playlist: { id: playlist.id, loop: playlist.loop }, items: rows };
+}

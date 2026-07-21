@@ -19,6 +19,17 @@ function formatDuration(sec: number | null) {
 export function TrackCard({ track }: { track: Track }) {
   const [pending, startTransition] = useTransition();
   const [title, setTitle] = useState(track.title);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = (label: string, fn: () => Promise<void>) =>
+    startTransition(async () => {
+      setError(null);
+      try {
+        await fn();
+      } catch {
+        setError(`Couldn't ${label} — try again.`);
+      }
+    });
 
   return (
     <div className="flex items-center gap-4 rounded-xl bg-slate-900 p-3">
@@ -37,17 +48,18 @@ export function TrackCard({ track }: { track: Track }) {
             if (!file) return;
             const formData = new FormData();
             formData.set("artwork", file);
-            startTransition(() => replaceArtwork(track.id, formData));
+            run("replace the artwork", () => replaceArtwork(track.id, formData));
           }}
         />
       </label>
       <div className="min-w-0 flex-1 space-y-1">
         <input
           value={title}
+          aria-label="Track title"
           onChange={(e) => setTitle(e.target.value)}
           onBlur={() => {
             if (title.trim() && title !== track.title) {
-              startTransition(() => updateTrack(track.id, { title: title.trim() }));
+              run("rename the track", () => updateTrack(track.id, { title: title.trim() }));
             }
           }}
           className="w-full rounded bg-transparent text-slate-100 outline-none focus:bg-slate-800 px-1"
@@ -55,8 +67,9 @@ export function TrackCard({ track }: { track: Track }) {
         <div className="flex items-center gap-2 text-sm text-slate-400">
           <select
             value={track.kind}
+            aria-label="Track kind"
             onChange={(e) =>
-              startTransition(() =>
+              run("change the kind", () =>
                 updateTrack(track.id, { kind: e.target.value as Track["kind"] }),
               )
             }
@@ -70,12 +83,17 @@ export function TrackCard({ track }: { track: Track }) {
           </select>
           <span>{formatDuration(track.durationSec)}</span>
         </div>
+        {error && (
+          <p role="alert" className="text-sm text-rose-300">
+            {error}
+          </p>
+        )}
       </div>
       <button
         disabled={pending}
         onClick={() => {
           if (confirm(`Delete "${track.title}"?`)) {
-            startTransition(() => deleteTrack(track.id));
+            run("delete the track", () => deleteTrack(track.id));
           }
         }}
         className="rounded-lg px-3 py-2 text-slate-500 hover:bg-slate-800 hover:text-rose-300 disabled:opacity-50"

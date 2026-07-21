@@ -5,13 +5,14 @@ import {
   isValidFamilyToken,
   isValidParentToken,
 } from "@/lib/auth";
+import { requiredEnv } from "@/lib/env";
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const familyOk = await isValidFamilyToken(
     request.cookies.get(FAMILY_COOKIE)?.value,
-    process.env.FAMILY_PASSWORD!,
+    requiredEnv("FAMILY_PASSWORD"),
   );
   if (!familyOk) {
     if (pathname.startsWith("/api")) {
@@ -23,7 +24,7 @@ export async function proxy(request: NextRequest) {
   if (pathname.startsWith("/parent") && pathname !== "/parent/pin") {
     const parentOk = await isValidParentToken(
       request.cookies.get(PARENT_COOKIE)?.value,
-      process.env.PARENT_PIN!,
+      requiredEnv("PARENT_PIN"),
     );
     if (!parentOk) {
       return NextResponse.redirect(new URL("/parent/pin", request.url));
@@ -35,6 +36,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!login|api/upload|_next/static|_next/image|favicon.ico|icons/|manifest.webmanifest).*)",
+    "/((?!login|api/upload|_next/static|_next/image|favicon.ico|icons/|manifest.webmanifest|sw.js).*)",
   ],
 };
