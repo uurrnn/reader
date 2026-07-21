@@ -2,6 +2,7 @@ const encoder = new TextEncoder();
 
 export const FAMILY_COOKIE = "family_session";
 export const PARENT_COOKIE = "parent_session";
+export const PARENT_TTL_SECONDS = 60 * 60;
 
 async function hmacHex(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -21,8 +22,10 @@ export function familyToken(password: string): Promise<string> {
   return hmacHex(password, "family-v1");
 }
 
-export function parentToken(pin: string): Promise<string> {
-  return hmacHex(pin, "parent-v1");
+export function parentToken(pin: string, expiresAtSec: number): Promise<string> {
+  return hmacHex(pin, `parent-v1.${expiresAtSec}`).then(
+    (mac) => `${expiresAtSec}.${mac}`,
+  );
 }
 
 export async function isValidFamilyToken(
@@ -35,6 +38,12 @@ export async function isValidFamilyToken(
 export async function isValidParentToken(
   token: string | undefined,
   pin: string,
+  nowSec: number = Math.floor(Date.now() / 1000),
 ): Promise<boolean> {
-  return !!token && token === (await parentToken(pin));
+  if (!token) return false;
+  const dot = token.indexOf(".");
+  if (dot < 1) return false;
+  const expiresAtSec = Number(token.slice(0, dot));
+  if (!Number.isInteger(expiresAtSec) || expiresAtSec <= nowSec) return false;
+  return token === (await parentToken(pin, expiresAtSec));
 }
