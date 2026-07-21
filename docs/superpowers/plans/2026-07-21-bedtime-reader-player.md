@@ -1125,7 +1125,10 @@ export class BedtimeEngine {
         { once: true },
       );
     }
-    void this.audio.play().then(() => this.fadeTo(targetGain, fadeInSec));
+    void this.audio
+      .play()
+      .then(() => this.fadeTo(targetGain, fadeInSec))
+      .catch(() => {});
   }
 
   private startResumeTicks(): void {
@@ -1161,6 +1164,7 @@ export class BedtimeEngine {
   arm(startTime: string, hardStopTime: string | null): void {
     this.ensureContext();
     this.clearTimers();
+    this.audio.pause();
     this.inAmbient = false;
     this.pos = { index: 0, loopsDone: 0 };
     const tick = () => {
@@ -1172,7 +1176,7 @@ export class BedtimeEngine {
       () => this.startNow(hardStopTime),
       msUntilStart(new Date(), startTime),
     );
-    this.setState("armed");
+    this.state = "armed";
     tick();
   }
 
@@ -1185,10 +1189,7 @@ export class BedtimeEngine {
   startNow(hardStopTime: string | null = null): void {
     if (this.opts.lineup.length === 0) return;
     this.ensureContext();
-    if (this.countdownInterval) clearInterval(this.countdownInterval);
-    if (this.startTimeout) clearTimeout(this.startTimeout);
-    this.countdownInterval = null;
-    this.startTimeout = null;
+    this.clearTimers();
     this.secondsToStart = null;
     this.inAmbient = false;
     this.pos = { index: 0, loopsDone: 0 };
@@ -1253,9 +1254,12 @@ export class BedtimeEngine {
   togglePause(): void {
     if (this.audio.paused) {
       this.ensureContext();
-      void this.audio.play().then(() =>
-        this.fadeTo(this.inAmbient ? AMBIENT_GAIN : 1, PAUSE_FADE_SEC),
-      );
+      void this.audio
+        .play()
+        .then(() =>
+          this.fadeTo(this.inAmbient ? AMBIENT_GAIN : 1, PAUSE_FADE_SEC),
+        )
+        .catch(() => {});
       this.emit();
     } else {
       this.fadeTo(0, PAUSE_FADE_SEC, () => {
@@ -1274,7 +1278,7 @@ export class BedtimeEngine {
       this.secondsToStart = null;
       this.setState("stopped");
     };
-    if (opts.fade && this.state === "playing") {
+    if (opts.fade && (this.state === "playing" || this.state === "ambient")) {
       this.setState("fading");
       this.fadeTo(0, this.opts.fadeSeconds, finish);
     } else {
@@ -1286,6 +1290,8 @@ export class BedtimeEngine {
     this.clearTimers();
     this.audio.pause();
     this.audio.removeAttribute("src");
+    const w = window as unknown as { __bedtimeAudio?: HTMLAudioElement };
+    if (w.__bedtimeAudio === this.audio) delete w.__bedtimeAudio;
     if (this.ctx) void this.ctx.close();
     this.ctx = null;
     this.gain = null;
