@@ -27,6 +27,8 @@ export async function POST(request: Request): Promise<NextResponse> {
             "audio/ogg",
             "audio/wav",
             "audio/flac",
+            "audio/x-m4b",
+            "audio/m4b",
           ],
           addRandomSuffix: true,
           maximumSizeInBytes: 500 * 1024 * 1024,
