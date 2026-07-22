@@ -2,13 +2,11 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { requireFamily } from "@/lib/auth-server";
 import { db } from "@/lib/db";
 import { playbackState, playlistItems, tracks } from "@/lib/db/schema";
 import { getOrCreateTonight, TONIGHT_MAX_ITEMS } from "@/lib/playlists";
 
 export async function addToTonight(trackId: number): Promise<void> {
-  await requireFamily();
   const [track] = await db.select().from(tracks).where(eq(tracks.id, trackId));
   if (!track || track.kind === "ambient") return;
   const tonight = await getOrCreateTonight();
@@ -29,7 +27,6 @@ export async function addToTonight(trackId: number): Promise<void> {
 }
 
 export async function removeTonightItem(itemId: number): Promise<void> {
-  await requireFamily();
   const tonight = await getOrCreateTonight();
   await db
     .delete(playlistItems)
@@ -40,14 +37,12 @@ export async function removeTonightItem(itemId: number): Promise<void> {
 }
 
 export async function clearTonight(): Promise<void> {
-  await requireFamily();
   const tonight = await getOrCreateTonight();
   await db.delete(playlistItems).where(eq(playlistItems.playlistId, tonight.id));
   revalidatePath("/");
 }
 
 export async function saveResume(trackId: number, positionSec: number): Promise<void> {
-  await requireFamily();
   if (!Number.isFinite(positionSec) || positionSec < 0) return;
   await db
     .insert(playbackState)
@@ -59,6 +54,5 @@ export async function saveResume(trackId: number, positionSec: number): Promise<
 }
 
 export async function clearResume(trackId: number): Promise<void> {
-  await requireFamily();
   await db.delete(playbackState).where(eq(playbackState.trackId, trackId));
 }

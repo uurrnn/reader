@@ -1,6 +1,5 @@
 const encoder = new TextEncoder();
 
-export const FAMILY_COOKIE = "family_session";
 export const PARENT_COOKIE = "parent_session";
 export const PARENT_TTL_SECONDS = 60 * 60;
 
@@ -18,21 +17,10 @@ async function hmacHex(secret: string, message: string): Promise<string> {
     .join("");
 }
 
-export function familyToken(password: string): Promise<string> {
-  return hmacHex(password, "family-v1");
-}
-
 export function parentToken(pin: string, expiresAtSec: number): Promise<string> {
   return hmacHex(pin, `parent-v1.${expiresAtSec}`).then(
     (mac) => `${expiresAtSec}.${mac}`,
   );
-}
-
-export async function isValidFamilyToken(
-  token: string | undefined,
-  password: string,
-): Promise<boolean> {
-  return !!token && token === (await familyToken(password));
 }
 
 export async function isValidParentToken(

@@ -7,7 +7,6 @@
 //     (override the path with the FFMPEG_PATH env var if it lives elsewhere).
 //   - `npm run dev` already running and reachable at http://localhost:3000.
 //   - .env.local configured with the dev credentials this script assumes:
-//       FAMILY_PASSWORD=dev-password
 //       PARENT_PIN=1234
 //     plus a real DATABASE_URL / BLOB_READ_WRITE_TOKEN — this flow exercises
 //     the actual dev Neon database and Vercel Blob store. The script cleans
@@ -19,7 +18,7 @@
 //
 // Run: npm run e2e
 //
-// Covers: login gate (wrong then right password), parent PIN gate, a
+// Covers: public shelf (no login gate), parent PIN gate, a
 // tagged-mp3 upload (title/artwork/duration extracted from ID3 tags), title
 // + kind edit persistence across reload, an untagged upload (cleaned
 // filename + placeholder icon), a duplicate-filename two-file batch upload,
@@ -150,27 +149,13 @@ async function main() {
       await dialog.accept();
     });
 
-    // --- Step 1: login gate (wrong then right password) ---
+    // --- Step 1: no login gate — shelf is public ---
     await page.goto(BASE + "/");
-    await page.waitForURL(/\/login/);
-    assert(page.url().includes("/login"), "redirected to /login when unauthenticated");
-
-    await page.fill('input[name="password"]', "wrong-password");
-    await page.click('button[type="submit"]');
-    // The login action throttles failed attempts with a ~1.5s delay before
-    // redirecting to /login?error=1; wait on that redirect rather than a
-    // fixed sleep so this doesn't flake against the throttle.
-    await page.waitForURL(/error=1/, { timeout: 5000 });
+    await page.waitForSelector('[data-testid="parent-door"]', { timeout: 5000 });
     assert(
-      /not it|try again/i.test((await page.textContent("body")) ?? ""),
-      "wrong password shows an error message",
+      new URL(page.url()).pathname === "/",
+      "shelf loads directly at / with no login redirect",
     );
-    assert(page.url().includes("/login"), "still on /login after wrong password");
-
-    await page.fill('input[name="password"]', "dev-password");
-    await page.click('button[type="submit"]');
-    await page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 5000 });
-    assert(!page.url().includes("/login"), "correct password navigates away from /login");
 
     // --- Step 2: parent PIN gate ---
     await page.goto(BASE + "/parent");

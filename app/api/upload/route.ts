@@ -1,7 +1,7 @@
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { FAMILY_COOKIE, isValidFamilyToken } from "@/lib/auth";
+import { PARENT_COOKIE, isValidParentToken } from "@/lib/auth";
 import { requiredEnv } from "@/lib/env";
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -12,9 +12,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       request,
       onBeforeGenerateToken: async () => {
         const cookieStore = await cookies();
-        const ok = await isValidFamilyToken(
-          cookieStore.get(FAMILY_COOKIE)?.value,
-          requiredEnv("FAMILY_PASSWORD"),
+        const ok = await isValidParentToken(
+          cookieStore.get(PARENT_COOKIE)?.value,
+          requiredEnv("PARENT_PIN"),
         );
         if (!ok) throw new Error("Not authorized");
         return {
